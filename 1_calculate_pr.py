@@ -59,7 +59,7 @@ import pickle
 #============================PARAMETERS====================================
 #==========================================================================
 
-
+samtools_path = 'samtools'
 
 
 
@@ -73,11 +73,6 @@ import pickle
 #data tables are organized largely by type/system
 #some data tables overlap for ease of analysis
 
-#RNA-Seq
-data_file = '%sdata_tables/171207_SUM159_FKBP_DHX15_CRISPR_D5_FASTQ_TABLE.txt' % (projectFolder)
-
-#gene gtf
-gene_gtf_path = '/storage/cylin/grail/genomes/Homo_sapiens/UCSC/hg38/Annotation/Genes/genes.gtf'
 
 
 #================================================================================
@@ -252,7 +247,7 @@ def main():
     #setting up the output folder
     output_folder = utils.formatFolder(args.output,True)
     print('Writing output to %s\n' % (output_folder))
-    os.chdir(projectFolder)
+    os.chdir(output_folder)
 
     #verifying the data table
     data_file = args.data_file
@@ -732,15 +727,25 @@ def makeBedLine(read1_loci,read2_loci,first_read_strand='.',read_id ='.'):
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
-def get_processing_ratio(bam,gene,genomeDirectory,n_segment=10,return_unprocessed=False):
+def get_processing_ratio(bam,gene,genomeDirectory,n_jxn=5,n_segment=10,return_unprocessed=False):
 
     '''
     calculates the ratio of unprocsesed to processed reads
     requires read segments > n_segment (default 10)
     '''
     
-    intron_collection = utils.LocusCollection(gene.introns())
-    exon_collection = utils.LocusCollection(gene.txExons())
+
+
+    #we want to shorten our introns to basically account for the n_jxn parameters
+    if n_jxn > 0:
+        intron_loci = gene.introns()
+        shortened_loci =[utils.Locus(locus.chr(),locus.start() + n_jxn, locus.end() - n_jxn,locus.sense(),locus.ID()) for locus in intron_loci]
+        intron_collection = utils.LocusCollection(shortened_loci)
+    else:
+        intron_collection = utils.LocusCollection(gene.introns())        
+
+    #don't actually need the exons
+    #exon_collection = utils.LocusCollection(gene.txExons())
     
     all_reads = bam.getRawReads(gene.txLocus(),'.',False,True,False)
     
@@ -792,7 +797,7 @@ def get_processing_ratio(bam,gene,genomeDirectory,n_segment=10,return_unprocesse
 
     if return_unprocessed:
         unprocessed_bed = []
-
+        unprocessed_sam = [] #store original read lines
     for read_id in read_id_list:
         
         #stores for each segment whether it's exonic (E), intronic (I), or straddling a boundary (EI)
@@ -858,7 +863,8 @@ def get_processing_ratio(bam,gene,genomeDirectory,n_segment=10,return_unprocesse
                 bed_line = makeBedLine(first_read_loci,second_read_loci,first_read_strand,'.')
                 if bed_line != []:
                     unprocessed_bed.append(bed_line)
-
+                    unprocessed_sam.append(pair_dict[read_id][0])
+                    unprocessed_sam.append(pair_dict[read_id][1])
 
         ticker+=1
 
@@ -867,7 +873,7 @@ def get_processing_ratio(bam,gene,genomeDirectory,n_segment=10,return_unprocesse
     unprocessed_ratio = round(len(unprocessed_reads)/float(len(read_id_list)),3)
     cryptic_ratio = round(len(cryptic_reads)/float(len(read_id_list)),3)
     if return_unprocessed:
-        return total_reads,processed_ratio,unprocessed_ratio,cryptic_ratio,unprocessed_bed
+        return total_reads,processed_ratio,unprocessed_ratio,cryptic_ratio,unprocessed_bed,unprocessed_sam
     else:
         return total_reads,processed_ratio,unprocessed_ratio,cryptic_ratio
     
@@ -880,6 +886,7 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
 
     '''
     spits out a table for processed, unprocessed, and cryptic for all genes/bams provided
+    for now segment min length and min jxn overlap are hard coded
     '''
     
     genome_build = genome.name()
@@ -909,7 +916,23 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
     cryptic_table = [['REF_ID','GENE'] + names_list]
     unprocessed_table = [['REF_ID','GENE'] + names_list]
 
-    #now we need to set up the bed files that we're writing to for each bam
+
+    #now we need to set up each sam and make sure we add the header
+
+    sam_path_list = ['%s%s_%s_unprocessed.sam' % (output_folder,genome_build,name) for name in names_list]
+    #easiest way is to create the file by piping the bam header
+
+    for i in range(len(sam_path_list)):
+        #first locate the original bam
+        bam_path = bam_list[i]
+        sam_path = sam_path_list[i]
+
+        #now we want to pipe the header to the sam file
+        header_cmd = '%s view -H %s > %s' % (samtools_path,bam_path,sam_path)
+        os.system(header_cmd)
+
+
+    #set up each bed and add the track header line
     bed_path_list = ['%s%s_%s_unprocessed.bed' % (output_folder,genome_build,name) for name in names_list]
     for i in range(len(bed_path_list)):
         bed_path = bed_path_list[i]
@@ -941,13 +964,20 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
         for i in range(len(bam_list)):
             bam = bam_list[i]
             
-            total_reads,processed_ratio,unprocessed_ratio,cryptic_ratio,unprocessed_bed = get_processing_ratio(bam,gene,genomeDirectory,n_segment=10,return_unprocessed=True)
+            total_reads,processed_ratio,unprocessed_ratio,cryptic_ratio,unprocessed_bed,unprocessed_sam = get_processing_ratio(bam,gene,genomeDirectory,n_jxn=5,n_segment=10,return_unprocessed=True)
 
             if len(unprocessed_bed) > 0:
                 bed_file = open(bed_path_list[i],'a')
                 for line in unprocessed_bed:
                     bed_file.write('\t'.join([str(x) for x in line]) +'\n')
                 bed_file.close()
+
+            if len(unprocessed_sam) > 0:
+                sam_file = open(sam_path_list[i],'a')
+                for line in unprocessed_sam:
+                    sam_file.write('\t'.join([str(x) for x in line]) +'\n')
+                sam_file.close()
+
             
             total_vector.append(total_reads)
             processed_vector.append(processed_ratio)
