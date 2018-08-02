@@ -285,13 +285,21 @@ def main():
 
     print('\n\n')
     print('#======================================================================')
-    print('#================IV. PULLING READS FROM TRANSCRIPTS====================')
+    print('#================III. CALCULATING PROCESSING RATIOS====================')
     print('#======================================================================')
     print('\n\n')
 
 
     calculatePR(genome,data_file,gene_dict,ref_id_list,names_list,analysis_name,output_folder)
     
+    print('\n\n')
+    print('#======================================================================')
+    print('#================IV. FORMATTING UNPROCESSED SAMS=======================')
+    print('#======================================================================')
+    print('\n\n')
+
+    formatSams(genome,data_file,names_list,output_folder)
+
 
 #==========================================================================
 #===================SPECIFIC FUNCTIONS FOR ANALYSIS========================
@@ -924,7 +932,7 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
 
     for i in range(len(sam_path_list)):
         #first locate the original bam
-        bam_path = bam_list[i]
+        bam_path = bam_list[i].path()
         sam_path = sam_path_list[i]
 
         #now we want to pipe the header to the sam file
@@ -1008,9 +1016,47 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
     utils.unParseTable(unprocessed_table,unprocessed_output,'\t')
     utils.unParseTable(cryptic_table,cryptic_output,'\t')
 
-        
 
-    
+
+def formatSams(genome,data_file,names_list,output_folder):
+
+    '''converts to bam, sorts and indexes'''
+
+    genome_build = genome.name()
+
+    #load the data file
+    data_dict = pipeline_dfci.loadDataTable(data_file)
+
+    if len(names_list) == 0:
+        names_list = data_dict.keys()
+
+    sam_path_list = ['%s%s_%s_unprocessed.sam' % (output_folder,genome_build,name) for name in names_list]
+    #easiest way is to create the file by piping the bam header
+
+    for i in range(len(sam_path_list)):
+
+        print('procesing sam from %s' % (names_list[i]))
+        
+        #get output sam paths
+        sam_path = sam_path_list[i]
+        
+        #first convert to bam
+        unprocessed_bam_path = sam_path.replace('.sam','.bam')
+        view_cmd = '%s view -bS %s > %s' % (samtools_path,sam_path,unprocessed_bam_path)
+        os.system(view_cmd)
+        
+        #now sort
+        sorted_bam_path = unprocessed_bam_path.replace('.bam','.sorted.bam')
+        sort_cmd = '%s sort %s -o %s' % (samtools_path,unprocessed_bam_path,sorted_bam_path)
+        os.system(sort_cmd)
+
+        #now index
+        index_cmd = '%s index %s' % (samtools_path,sorted_bam_path)
+        os.system(index_cmd)
+
+        #no remove unsorted bam
+        rm_bam_cmd = 'rm %s' % (unprocessed_bam_path)
+        os.system(rm_bam_cmd)
     
 #==========================================================================
 #==================================THE END=================================
