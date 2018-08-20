@@ -145,7 +145,14 @@ def loadGenome(genome_build,config_file = '',verbose=False):
         'HG38':{'annot_file':'%sannotation/hg38_refseq.ucsc' % (pipeline_dir),
                 'genome_directory':'/storage/cylin/grail/genomes/Homo_sapiens/UCSC/hg38/Sequence/Chromosomes/',
                 'gene_gtf':'/storage/cylin/grail/genomes/Homo_sapiens/UCSC/hg38/Annotation/Genes/genes.gtf'
-                }
+                },
+        'HG19':{'annot_file':'%sannotation/hg19_refseq.ucsc' % (pipeline_dir),
+                'genome_directory':'/storage/cylin/grail/genomes/Homo_sapiens/UCSC/hg19/Sequence/Chromosomes/',
+                'gene_gtf':'/storage/cylin/grail/genomes/Homo_sapiens/UCSC/hg19/Annotation/Genes/genes.gtf'
+                },
+
+
+
 
         }
 
@@ -189,7 +196,7 @@ def main():
     parser.add_argument("-d", "--data_file", dest="data_file",type=str,
                         help="Enter path to a standard lin lab format data table", required=True)
     parser.add_argument("-g", "--genome", dest="genome", type=str,
-                        help="specify a genome, HG38 is currently supported", required=True)
+                        help="specify a genome, Currently HG19 and HG38 are supported", required=True)
     # output flag
     parser.add_argument("-o", "--output", dest="output", type=str,
                         help="Enter the output folder.", required=True)
@@ -224,7 +231,7 @@ def main():
     print('Running processing ratio analysis for project %s\n' % (analysis_name))
 
     #getting genome
-    genome_build = args.genome
+    genome_build = args.genome.upper()
     genome = loadGenome(genome_build,'',False)
     
     #getting gene gtf
@@ -247,7 +254,7 @@ def main():
     #setting up the output folder
     output_folder = utils.formatFolder(args.output,True)
     print('Writing output to %s\n' % (output_folder))
-    os.chdir(output_folder)
+    os.chdir(output_folder) 
 
     #verifying the data table
     data_file = args.data_file
@@ -397,7 +404,7 @@ def makeGeneDict(gene_gtf_path,output='',ref_list = []):
         output_file = open(output,'w')
         pickle.dump(gene_dict,output_file)
         output_file.close()
-        print('wrote gene dict as a pickle to %s' % (output_file))
+        print('wrote gene dict as a pickle to %s' % (output))
         return gene_dict
  
 
@@ -612,6 +619,8 @@ def decompose_sam_read(read,genomeDirectory,n_segment=10,debug=False):
                    '163':'+',
                    '83':'-',
                    '147':'-',
+                   '0':'+',
+                   '16':'-',
                    }
 
     
@@ -731,7 +740,7 @@ def makeBedLine(read1_loci,read2_loci,first_read_strand='.',read_id ='.'):
     else:
         return []
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#~~~~~~~~~~~~~~~~~~~~~~~~~~GET PROCESSING RATIO~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#~~~~~~~~~~~~~~~~~~~~~~~~GET PROCESSING RATIO PE~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
@@ -740,10 +749,9 @@ def get_processing_ratio(bam,gene,genomeDirectory,n_jxn=5,n_segment=10,return_un
     '''
     calculates the ratio of unprocsesed to processed reads
     requires read segments > n_segment (default 10)
+    this function is for paired end data
     '''
     
-
-
     #we want to shorten our introns to basically account for the n_jxn parameters
     if n_jxn > 0:
         intron_loci = gene.introns()
@@ -756,14 +764,16 @@ def get_processing_ratio(bam,gene,genomeDirectory,n_jxn=5,n_segment=10,return_un
     #exon_collection = utils.LocusCollection(gene.txExons())
     
     all_reads = bam.getRawReads(gene.txLocus(),'.',False,True,False)
-    
     #order is important here for the flags because we will use this later
     #to always structure pairs that are +/- orientation on the actual genome
     #e.g. 163 is second in the pair, but a + strand read
     #for fr library types, + strand genes will be 163/83
     #- strand genes will be 99/147
-    flag_filter_dict = {'+':['163','83'], #2nd is + strand #1st is - strand
-                        '-':['99','147'], #1st is + strand #2nd is - strand
+
+    #the 16,0 accounts for paired reads that have lost their pairing information, but for which
+    #read ID is correct
+    flag_filter_dict = {'+':['163','83','0','16'], #2nd is + strand #1st is - strand
+                        '-':['99','147','16','0'], #1st is + strand #2nd is - strand
                         }
 
     #now filter to sense reads for this particular transcript
@@ -774,7 +784,7 @@ def get_processing_ratio(bam,gene,genomeDirectory,n_jxn=5,n_segment=10,return_un
     for read in filtered_reads:
         pair_dict[read[0]].append(read) #since reads in the bam are ordered along the DNA + strand, our desired pair orientation is preserved
 
-    #now keep only full pairs
+    #now keep only full pairs that are the correct orientation
     read_id_list = pair_dict.keys()
 
     for read_id in read_id_list:
@@ -783,39 +793,52 @@ def get_processing_ratio(bam,gene,genomeDirectory,n_jxn=5,n_segment=10,return_un
             pair_dict.pop(read_id) #note, popping the keys does not update the read_id_list
 
     read_id_list = pair_dict.keys() #updated to remove non pairs
+    for read_id in read_id_list:
+        #for decomposed data where the reconstituted pairs aren't correct, '16' will be the left read flag
+        if pair_dict[read_id][0][1] == '16':
+            pair_dict.pop(read_id)
+
+    read_id_list = pair_dict.keys() #updated to remove decomposed pairs that are out of orientation
+
+    # flag_list = []
+    # for read_id in read_id_list:
+    #     flag_key = [pair_dict[read_id][0][1],pair_dict[read_id][1][1]]
+    #     flag_list.append(flag_key)
+        
+    # print(flag_list)
+
     if len(read_id_list) < 10:
         print('Less than 10 total reads for %s %s' % (gene.name(),gene.commonName()))
         if return_unprocessed:
-            return 0,0,0,0,[]
+            return 0,0,0,0,[],[]
         else:
             return 0,0,0,0
     #create some temp buckets to store these
     processed_reads = []
+    ir_reads = []
     unprocessed_reads = []
     cryptic_reads = []
     ticker = 0
 
-    # print(pair_dict['NS500589:294:H72CMBGX5:4:12408:11118:14417'])
-    # sys.exit()
-
     #using the leftmost read to figure out pair orientation
     pair_orientation_dict = {'163':'-',
                              '99':'+',
+                             '0':'+',                             
                              }
 
     if return_unprocessed:
         unprocessed_bed = []
         unprocessed_sam = [] #store original read lines
     for read_id in read_id_list:
-        
+
         #stores for each segment whether it's exonic (E), intronic (I), or straddling a boundary (EI)
         #E and E consecutive segments would denote an EE boundary
         first_read_segments = []
         second_read_segments = []
 
         #decompose the reads into individual segments
-        first_read_loci = decompose_sam_read(pair_dict[read_id][0],genomeDirectory,n_segment)
-        second_read_loci = decompose_sam_read(pair_dict[read_id][1],genomeDirectory,n_segment)
+        first_read_loci = decompose_sam_read(pair_dict[read_id][0],genomeDirectory,n_segment,debug=False)
+        second_read_loci = decompose_sam_read(pair_dict[read_id][1],genomeDirectory,n_segment,debug=False)
 
         #if we want to spit back the bed, need to figure out direction of first strand
         if return_unprocessed == True:
@@ -823,33 +846,25 @@ def get_processing_ratio(bam,gene,genomeDirectory,n_jxn=5,n_segment=10,return_un
 
         #first read
         #assume processed unless told otherwise
-
         for read_locus in first_read_loci:
             if intron_collection.getContainers(read_locus): #read segment entirely contained
-
                 first_read_segments.append('I')
             elif intron_collection.getOverlap(read_locus):
-
                 first_read_segments.append('EI')
             else:
                 first_read_segments.append('E')
 
         #second read
         #assume processed unless told otherwise
-
         for read_locus in second_read_loci:
             if intron_collection.getContainers(read_locus): #read segment entirely contained
-
                 second_read_segments.append('I')
             elif intron_collection.getOverlap(read_locus):
-
                 second_read_segments.append('EI')
             else:
                 second_read_segments.append('E')
-
         if first_read_segments.count('EI') > 0 or second_read_segments.count('EI') > 0:
-
-            
+            ir_reads.append(read_id)
             unprocessed_reads.append(read_id)
             if return_unprocessed:
                 bed_line = makeBedLine(first_read_loci,second_read_loci,first_read_strand,'.')
@@ -866,6 +881,7 @@ def get_processing_ratio(bam,gene,genomeDirectory,n_jxn=5,n_segment=10,return_un
             processed_reads.append(read_id)
 
         else:
+            unprocessed_reads.append(read_id)
             cryptic_reads.append(read_id)
             if return_unprocessed:
                 bed_line = makeBedLine(first_read_loci,second_read_loci,first_read_strand,'.')
@@ -873,17 +889,20 @@ def get_processing_ratio(bam,gene,genomeDirectory,n_jxn=5,n_segment=10,return_un
                     unprocessed_bed.append(bed_line)
                     unprocessed_sam.append(pair_dict[read_id][0])
                     unprocessed_sam.append(pair_dict[read_id][1])
-
         ticker+=1
 
     total_reads = len(read_id_list)
-    processed_ratio = round(len(processed_reads)/float(len(read_id_list)),3)
-    unprocessed_ratio = round(len(unprocessed_reads)/float(len(read_id_list)),3)
-    cryptic_ratio = round(len(cryptic_reads)/float(len(read_id_list)),3)
+    ir_ratio = round(len(ir_reads)/float(len(read_id_list)),4)
+    processed_ratio = round(len(processed_reads)/float(len(read_id_list)),4)
+    unprocessed_ratio = round(len(unprocessed_reads)/float(len(read_id_list)),4)
+    cryptic_ratio = round(len(cryptic_reads)/float(len(read_id_list)),4)
+
     if return_unprocessed:
-        return total_reads,processed_ratio,unprocessed_ratio,cryptic_ratio,unprocessed_bed,unprocessed_sam
+        return total_reads,processed_ratio,ir_ratio,unprocessed_ratio,cryptic_ratio,unprocessed_bed,unprocessed_sam
     else:
-        return total_reads,processed_ratio,unprocessed_ratio,cryptic_ratio
+        return total_reads,processed_ratio,ir_ratio,unprocessed_ratio,cryptic_ratio
+
+
     
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -917,16 +936,33 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
     print('loading bams from %s' % (data_file))
     print(names_list)
     bam_list = [utils.Bam(data_dict[name]['bam']) for name in names_list]
+
+    #get an mmr dict set up for read normalization
+    print('making mmr dict for data table %s' % (data_file))
+    mmr_dict ={}
+
+    for name in names_list:
+        bam = utils.Bam(data_dict[name]['bam'])
+        mmr = round(bam.getTotalReads()/1000000.0,2)
+        mmr_dict[name] = mmr
     
     #set up the output tables
     total_table = [['REF_ID','GENE'] + names_list]
-    processed_table = [['REF_ID','GENE'] + names_list]
-    cryptic_table = [['REF_ID','GENE'] + names_list]
-    unprocessed_table = [['REF_ID','GENE'] + names_list]
+    total_table_fpkm = [['REF_ID','GENE'] + names_list]
 
+    processed_table = [['REF_ID','GENE'] + names_list]
+    processed_table_fpkm = [['REF_ID','GENE'] + names_list]
+
+    ir_table = [['REF_ID','GENE'] + names_list]
+    ir_table_fpkm = [['REF_ID','GENE'] + names_list]
+
+    unprocessed_table = [['REF_ID','GENE'] + names_list]
+    unprocessed_table_fpkm = [['REF_ID','GENE'] + names_list]
+
+    cryptic_table = [['REF_ID','GENE'] + names_list]
+    cryptic_table_fpkm = [['REF_ID','GENE'] + names_list]
 
     #now we need to set up each sam and make sure we add the header
-
     sam_path_list = ['%s%s_%s_unprocessed.sam' % (output_folder,genome_build,name) for name in names_list]
     #easiest way is to create the file by piping the bam header
 
@@ -938,7 +974,6 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
         #now we want to pipe the header to the sam file
         header_cmd = '%s view -H %s > %s' % (samtools_path,bam_path,sam_path)
         os.system(header_cmd)
-
 
     #set up each bed and add the track header line
     bed_path_list = ['%s%s_%s_unprocessed.bed' % (output_folder,genome_build,name) for name in names_list]
@@ -958,21 +993,42 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
     #now iterate through genes as the first loop
     ticker = 0
     for ref_id in ref_list:
-        #print(ticker)
+
+        if gene_dict.has_key(ref_id) == False:
+            continue
+        gene = gene_dict[ref_id]
         if ticker % 100 == 0:
             print(ticker)
+            print(ref_id,gene.commonName())
         # if ticker == 10:
         #    break
 
-        gene = gene_dict[ref_id]
+        #getting the cumulataive lengths of the exons and introns in units of kb
+        total_length = float(gene.txLocus().len())/1000.0
+        exon_length = sum([locus.len() for locus in gene.txExons()])/1000.0
+        intron_length = sum([locus.len() for locus in gene.introns()])/1000.0
+
         total_vector = [ref_id,gene.commonName()]
+        total_vector_fpkm = [ref_id,gene.commonName()]
+
         processed_vector = [ref_id,gene.commonName()]
+        processed_vector_fpkm = [ref_id,gene.commonName()]
+
+        ir_vector =[ref_id,gene.commonName()]
+        ir_vector_fpkm =[ref_id,gene.commonName()]
+
         unprocessed_vector =[ref_id,gene.commonName()]
+        unprocessed_vector_fpkm =[ref_id,gene.commonName()]
+
         cryptic_vector = [ref_id,gene.commonName()]
+        cryptic_vector_fpkm = [ref_id,gene.commonName()]
+
         for i in range(len(bam_list)):
             bam = bam_list[i]
-            
-            total_reads,processed_ratio,unprocessed_ratio,cryptic_ratio,unprocessed_bed,unprocessed_sam = get_processing_ratio(bam,gene,genomeDirectory,n_jxn=5,n_segment=10,return_unprocessed=True)
+            bam_name = names_list[i]
+            bam_mmr = mmr_dict[bam_name]
+
+            total_reads,processed_ratio,ir_ratio,unprocessed_ratio,cryptic_ratio,unprocessed_bed,unprocessed_sam = get_processing_ratio(bam,gene,genomeDirectory,n_jxn=5,n_segment=10,return_unprocessed=True)
 
             if len(unprocessed_bed) > 0:
                 bed_file = open(bed_path_list[i],'a')
@@ -988,15 +1044,35 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
 
             
             total_vector.append(total_reads)
+            total_vector_fpkm.append(round(total_reads/bam_mmr/total_length,4))
+
             processed_vector.append(processed_ratio)
+            processed_vector_fpkm.append(round(processed_ratio*total_reads/bam_mmr/exon_length,4))
+
+            ir_vector.append(ir_ratio)
+            ir_vector_fpkm.append(round(unprocessed_ratio*total_reads/bam_mmr/intron_length,4))
+
             unprocessed_vector.append(unprocessed_ratio)
+            unprocessed_vector_fpkm.append(round(unprocessed_ratio*total_reads/bam_mmr/intron_length,4))
+
             cryptic_vector.append(cryptic_ratio)
+            cryptic_vector_fpkm.append(round(cryptic_ratio*total_reads/bam_mmr/intron_length,4))
         
         #add this gene line for all of the tables
         total_table.append(total_vector)
+        total_table_fpkm.append(total_vector_fpkm)
+
         processed_table.append(processed_vector)
+        processed_table_fpkm.append(processed_vector_fpkm)
+
+        ir_table.append(ir_vector)
+        ir_table_fpkm.append(ir_vector_fpkm)
+
         unprocessed_table.append(unprocessed_vector)
+        unprocessed_table_fpkm.append(unprocessed_vector_fpkm)
+
         cryptic_table.append(cryptic_vector)
+        cryptic_table_fpkm.append(cryptic_vector_fpkm)
         ticker +=1
 
 
@@ -1007,14 +1083,35 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
 
         
     total_output = '%s%s_total.txt' % (output_folder,analysis_name)
-    processed_output = '%s%s_processed.txt' % (output_folder,analysis_name)
-    unprocessed_output = '%s%s_unprocessed.txt' % (output_folder,analysis_name)
-    cryptic_output = '%s%s_cryptic.txt' % (output_folder,analysis_name)
+    processed_output = '%s%s_processed_ratio.txt' % (output_folder,analysis_name)
+    ir_output = '%s%s_ir_ratio.txt' % (output_folder,analysis_name)
+    unprocessed_output = '%s%s_unprocessed_ratio.txt' % (output_folder,analysis_name)
+    cryptic_output = '%s%s_cryptic_ratio.txt' % (output_folder,analysis_name)
+
+    total_fpkm_output = '%s%s_total_fpkm.txt' % (output_folder,analysis_name)
+    processed_fpkm_output = '%s%s_processed_fpkm.txt' % (output_folder,analysis_name)
+    ir_fpkm_output = '%s%s_ir_fpkm.txt' % (output_folder,analysis_name)
+    unprocessed_fpkm_output = '%s%s_unprocessed_fpkm.txt' % (output_folder,analysis_name)
+    cryptic_fpkm_output = '%s%s_cryptic_fpkm.txt' % (output_folder,analysis_name)
+
 
     utils.unParseTable(total_table,total_output,'\t')
     utils.unParseTable(processed_table,processed_output,'\t')
+    utils.unParseTable(ir_table,ir_output,'\t')
     utils.unParseTable(unprocessed_table,unprocessed_output,'\t')
     utils.unParseTable(cryptic_table,cryptic_output,'\t')
+
+
+    utils.unParseTable(total_table_fpkm,total_fpkm_output,'\t')
+    utils.unParseTable(processed_table_fpkm,processed_fpkm_output,'\t')
+    utils.unParseTable(ir_table_fpkm,ir_fpkm_output,'\t')
+    utils.unParseTable(unprocessed_table_fpkm,unprocessed_fpkm_output,'\t')
+    utils.unParseTable(cryptic_table_fpkm,cryptic_fpkm_output,'\t')
+
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#~~~~~~~~~~~~~~~~~~~~FORMAT SAM OUTPUT FILES FROM GUAC~~~~~~~~~~~~~~~~~~~~~
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
 
@@ -1057,6 +1154,115 @@ def formatSams(genome,data_file,names_list,output_folder):
         #no remove unsorted bam
         rm_bam_cmd = 'rm %s' % (unprocessed_bam_path)
         os.system(rm_bam_cmd)
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#~~~~~~~~~~~~~~~~~~~~FORMAT GUAC OUTPUT FILES FOR FPKM~~~~~~~~~~~~~~~~~~~~~
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+
+def formatGuacOut(data_file,guac_output_folder,analysis_name):
+
+    '''
+    formats guac output such that units for processed and unprocessed transcripts are presented in units of rpm/kb (reads (fragments if a pe) per million mapped reads per kb of transcript... essentially a FPKM model). BUT transcript length is important and needs to be normalized to mature mRNA length (sum of exons) and pre-mRNA length (sum of introns)
+    '''
+
+    # 1. first make an MMR dict 
+    print('making mmr dict for data table %s' % (data_file))
+    mmr_dict ={}
+    data_dict = pipeline_dfci.loadDataTable(data_file)
+    for name in data_dict:
+        bam = utils.Bam(data_dict[name]['bam'])
+        mmr = round(bam.getTotalReads()/1000000.0,2)
+        mmr_dict[name] = mmr
+
+    #1. open up the output folder and get the following
+    print('loading guac output')
+    #total reads table
+    #processed table
+    #gene dict
+    total_table = utils.parseTable('%s%s_total.txt' % (guac_output_folder,analysis_name),'\t')
+    processed_table = utils.parseTable('%s%s_processed.txt' % (guac_output_folder,analysis_name),'\t')
+    unprocessed_table = utils.parseTable('%s%s_unprocessed.txt' % (guac_output_folder,analysis_name),'\t')
+    gene_gtf_path = '%s%s_%s_gene_gtf.pkl' % (genome_build,guac_output_folder,analysis_name)
+
+    header = total_table[0]        
+    # #2. make a MMR dict using guac output... this will only produce a useable
+    # #unprocessed file
+    # print('making mmr dict for guac output in %s' % (guac_output_folder))
+    # mmr_dict ={}
+    # names_list = header[2:]
+    # for name in names_list:
+    #     bam_path = '%sHG19_%s_unprocessed.sorted.bam' % (guac_output_folder,name)
+    #     print(bam_path)
+    #     bam = utils.Bam(bam_path)
+    #     mmr = round(bam.getTotalReads()/1000000.0,2)
+    #     mmr_dict[name] = mmr
+
+
+
+    #3. loading the gene dict and creating an exon and intron length dict
+    print('loading gene dict')
+    gene_dict = pickle.load(open(gene_gtf_path,'r'))
+    ref_id_list = gene_dict.keys()
+
+    exon_length_dict = defaultdict(int)
+    intron_length_dict = defaultdict(int)
+    for ref_id in ref_id_list:
+        gene = gene_dict[ref_id]
+        exon_length = sum([locus.len() for locus in gene.txExons()])
+        intron_length = sum([locus.len() for locus in gene.introns()])
+        exon_length_dict[ref_id] = exon_length
+        intron_length_dict[ref_id] = intron_length
+
+    #4. now build the formatted table can copy header from the processed table
+    #need to iterate by row
+    print('calculating fpkm style measurements')
+
+    processed_fpkm_table = [header]
+    unprocessed_fpkm_table = [header]
+
+    ncol = len(header)
+    for i in range(1,len(total_table)):
+
+        ref_id = total_table[i][0]
+        gene_name = total_table[i][1]
+
+        exon_length = exon_length_dict[ref_id]
+        intron_length = intron_length_dict[ref_id]
+        processed_fpkm_vector =[]
+        unprocessed_fpkm_vector =[]
+        for j in range(2,ncol):
+
+            #multiple the processing by the total read count, divide by mmr, divide by length, multiple by 1000
+            #first for processing
+            pr = float(processed_table[i][j])
+            mmr = mmr_dict[header[j]]
+            total_reads = int(total_table[i][j])
+            #pr_fpkm = ((pr*total_reads/mmr)/exon_length)*1000
+            pr_fpkm = (pr*total_reads)/mmr
+            processed_fpkm_vector.append(round(pr_fpkm,2))
+
+            #next for unprocessed
+            if intron_length == 0:
+                upr_fpkm = 0.0
+            else:
+                #upr = float(unprocessed_table[i][j])
+                upr = 1-pr
+                mmr = mmr_dict[header[j]]
+                total_reads = int(total_table[i][j])
+                #upr_fpkm = ((upr*total_reads/mmr)/intron_length)*1000
+                upr_fpkm = (upr*total_reads)/mmr
+            unprocessed_fpkm_vector.append(round(upr_fpkm,2))
+
+        processed_fpkm_table.append(total_table[i][0:2] + processed_fpkm_vector)
+        unprocessed_fpkm_table.append(total_table[i][0:2] + unprocessed_fpkm_vector)
+
+    #write out the updated tables
+    processed_fpkm_out = '%s%s_processed_fpkm.txt' % (guac_output_folder,analysis_name)
+    unprocessed_fpkm_out = '%s%s_unprocessed_fpkm.txt' % (guac_output_folder,analysis_name)
+    utils.unParseTable(processed_fpkm_table,processed_fpkm_out,'\t')
+    utils.unParseTable(unprocessed_fpkm_table,unprocessed_fpkm_out,'\t')
     
 #==========================================================================
 #==================================THE END=================================
