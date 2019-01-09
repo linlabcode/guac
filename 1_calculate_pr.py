@@ -810,9 +810,9 @@ def get_processing_ratio(bam,gene,genomeDirectory,n_jxn=5,n_segment=10,return_un
     if len(read_id_list) < 10:
         print('Less than 10 total reads for %s %s' % (gene.name(),gene.commonName()))
         if return_unprocessed:
-            return 0,0,0,0,[],[]
+            return 0,0,0,0,0,[],[]
         else:
-            return 0,0,0,0
+            return 0,0,0,0,0
     #create some temp buckets to store these
     processed_reads = []
     ir_reads = []
@@ -949,18 +949,23 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
     #set up the output tables
     total_table = [['REF_ID','GENE'] + names_list]
     total_table_fpkm = [['REF_ID','GENE'] + names_list]
+    total_table_fpm = [['REF_ID','GENE'] + names_list]
 
     processed_table = [['REF_ID','GENE'] + names_list]
     processed_table_fpkm = [['REF_ID','GENE'] + names_list]
+    processed_table_fpm = [['REF_ID','GENE'] + names_list]
 
     ir_table = [['REF_ID','GENE'] + names_list]
     ir_table_fpkm = [['REF_ID','GENE'] + names_list]
+    ir_table_fpm = [['REF_ID','GENE'] + names_list]
 
     unprocessed_table = [['REF_ID','GENE'] + names_list]
     unprocessed_table_fpkm = [['REF_ID','GENE'] + names_list]
+    unprocessed_table_fpm = [['REF_ID','GENE'] + names_list]
 
     cryptic_table = [['REF_ID','GENE'] + names_list]
     cryptic_table_fpkm = [['REF_ID','GENE'] + names_list]
+    cryptic_table_fpm = [['REF_ID','GENE'] + names_list]
 
     #now we need to set up each sam and make sure we add the header
     sam_path_list = ['%s%s_%s_unprocessed.sam' % (output_folder,genome_build,name) for name in names_list]
@@ -1010,18 +1015,23 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
 
         total_vector = [ref_id,gene.commonName()]
         total_vector_fpkm = [ref_id,gene.commonName()]
+        total_vector_fpm = [ref_id,gene.commonName()]
 
         processed_vector = [ref_id,gene.commonName()]
         processed_vector_fpkm = [ref_id,gene.commonName()]
+        processed_vector_fpm = [ref_id,gene.commonName()]
 
         ir_vector =[ref_id,gene.commonName()]
         ir_vector_fpkm =[ref_id,gene.commonName()]
+        ir_vector_fpm =[ref_id,gene.commonName()]
 
         unprocessed_vector =[ref_id,gene.commonName()]
         unprocessed_vector_fpkm =[ref_id,gene.commonName()]
+        unprocessed_vector_fpm =[ref_id,gene.commonName()]
 
         cryptic_vector = [ref_id,gene.commonName()]
         cryptic_vector_fpkm = [ref_id,gene.commonName()]
+        cryptic_vector_fpm = [ref_id,gene.commonName()]
 
         for i in range(len(bam_list)):
             bam = bam_list[i]
@@ -1045,36 +1055,61 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
             
             total_vector.append(total_reads)
             total_vector_fpkm.append(round(total_reads/bam_mmr/total_length,4))
+            total_vector_fpm.append(round(total_reads/bam_mmr,4))
 
             processed_vector.append(processed_ratio)
             processed_vector_fpkm.append(round(processed_ratio*total_reads/bam_mmr/exon_length,4))
+            processed_vector_fpm.append(round(processed_ratio*total_reads/bam_mmr,4))
 
             ir_vector.append(ir_ratio)
-            ir_vector_fpkm.append(round(unprocessed_ratio*total_reads/bam_mmr/intron_length,4))
-
             unprocessed_vector.append(unprocessed_ratio)
-            unprocessed_vector_fpkm.append(round(unprocessed_ratio*total_reads/bam_mmr/intron_length,4))
-
             cryptic_vector.append(cryptic_ratio)
-            cryptic_vector_fpkm.append(round(cryptic_ratio*total_reads/bam_mmr/intron_length,4))
+
+            if intron_length == 0:
+                print(ref_id)
+                print(ir_ratio)
+                print(unprocessed_ratio)
+                print(cryptic_ratio)
+                ir_vector_fpkm.append(0)
+                unprocessed_vector_fpkm.append(0)
+                cryptic_vector_fpkm.append(0)
+
+                ir_vector_fpm.append(0)
+                unprocessed_vector_fpm.append(0)
+                cryptic_vector_fpm.append(0)
+
+
+            else:
+                ir_vector_fpkm.append(round(ir_ratio*total_reads/bam_mmr/intron_length,4))
+                unprocessed_vector_fpkm.append(round(unprocessed_ratio*total_reads/bam_mmr/intron_length,4))
+                cryptic_vector_fpkm.append(round(cryptic_ratio*total_reads/bam_mmr/intron_length,4))
+
+                ir_vector_fpm.append(round(ir_ratio*total_reads/bam_mmr,4))
+                unprocessed_vector_fpm.append(round(unprocessed_ratio*total_reads/bam_mmr,4))
+                cryptic_vector_fpm.append(round(cryptic_ratio*total_reads/bam_mmr,4))
+
         
         #add this gene line for all of the tables
         total_table.append(total_vector)
         total_table_fpkm.append(total_vector_fpkm)
+        total_table_fpm.append(total_vector_fpm)
 
         processed_table.append(processed_vector)
         processed_table_fpkm.append(processed_vector_fpkm)
+        processed_table_fpm.append(processed_vector_fpm)
 
         ir_table.append(ir_vector)
         ir_table_fpkm.append(ir_vector_fpkm)
+        ir_table_fpm.append(ir_vector_fpm)
 
         unprocessed_table.append(unprocessed_vector)
         unprocessed_table_fpkm.append(unprocessed_vector_fpkm)
+        unprocessed_table_fpm.append(unprocessed_vector_fpm)
 
         cryptic_table.append(cryptic_vector)
         cryptic_table_fpkm.append(cryptic_vector_fpkm)
+        cryptic_table_fpm.append(cryptic_vector_fpm)
         ticker +=1
-
 
     #now write the output
     if len(analysis_name) ==0:
@@ -1094,6 +1129,12 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
     unprocessed_fpkm_output = '%s%s_unprocessed_fpkm.txt' % (output_folder,analysis_name)
     cryptic_fpkm_output = '%s%s_cryptic_fpkm.txt' % (output_folder,analysis_name)
 
+    total_fpm_output = '%s%s_total_fpm.txt' % (output_folder,analysis_name)
+    processed_fpm_output = '%s%s_processed_fpm.txt' % (output_folder,analysis_name)
+    ir_fpm_output = '%s%s_ir_fpm.txt' % (output_folder,analysis_name)
+    unprocessed_fpm_output = '%s%s_unprocessed_fpm.txt' % (output_folder,analysis_name)
+    cryptic_fpm_output = '%s%s_cryptic_fpm.txt' % (output_folder,analysis_name)
+
 
     utils.unParseTable(total_table,total_output,'\t')
     utils.unParseTable(processed_table,processed_output,'\t')
@@ -1107,6 +1148,13 @@ def calculatePR(genome,data_file,gene_dict,ref_list = [],names_list = [],analysi
     utils.unParseTable(ir_table_fpkm,ir_fpkm_output,'\t')
     utils.unParseTable(unprocessed_table_fpkm,unprocessed_fpkm_output,'\t')
     utils.unParseTable(cryptic_table_fpkm,cryptic_fpkm_output,'\t')
+
+
+    utils.unParseTable(total_table_fpm,total_fpm_output,'\t')
+    utils.unParseTable(processed_table_fpm,processed_fpm_output,'\t')
+    utils.unParseTable(ir_table_fpm,ir_fpm_output,'\t')
+    utils.unParseTable(unprocessed_table_fpm,unprocessed_fpm_output,'\t')
+    utils.unParseTable(cryptic_table_fpm,cryptic_fpm_output,'\t')
 
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1155,114 +1203,6 @@ def formatSams(genome,data_file,names_list,output_folder):
         rm_bam_cmd = 'rm %s' % (unprocessed_bam_path)
         os.system(rm_bam_cmd)
 
-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#~~~~~~~~~~~~~~~~~~~~FORMAT GUAC OUTPUT FILES FOR FPKM~~~~~~~~~~~~~~~~~~~~~
-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-
-
-def formatGuacOut(data_file,guac_output_folder,analysis_name):
-
-    '''
-    formats guac output such that units for processed and unprocessed transcripts are presented in units of rpm/kb (reads (fragments if a pe) per million mapped reads per kb of transcript... essentially a FPKM model). BUT transcript length is important and needs to be normalized to mature mRNA length (sum of exons) and pre-mRNA length (sum of introns)
-    '''
-
-    # 1. first make an MMR dict 
-    print('making mmr dict for data table %s' % (data_file))
-    mmr_dict ={}
-    data_dict = pipeline_dfci.loadDataTable(data_file)
-    for name in data_dict:
-        bam = utils.Bam(data_dict[name]['bam'])
-        mmr = round(bam.getTotalReads()/1000000.0,2)
-        mmr_dict[name] = mmr
-
-    #1. open up the output folder and get the following
-    print('loading guac output')
-    #total reads table
-    #processed table
-    #gene dict
-    total_table = utils.parseTable('%s%s_total.txt' % (guac_output_folder,analysis_name),'\t')
-    processed_table = utils.parseTable('%s%s_processed.txt' % (guac_output_folder,analysis_name),'\t')
-    unprocessed_table = utils.parseTable('%s%s_unprocessed.txt' % (guac_output_folder,analysis_name),'\t')
-    gene_gtf_path = '%s%s_%s_gene_gtf.pkl' % (genome_build,guac_output_folder,analysis_name)
-
-    header = total_table[0]        
-    # #2. make a MMR dict using guac output... this will only produce a useable
-    # #unprocessed file
-    # print('making mmr dict for guac output in %s' % (guac_output_folder))
-    # mmr_dict ={}
-    # names_list = header[2:]
-    # for name in names_list:
-    #     bam_path = '%sHG19_%s_unprocessed.sorted.bam' % (guac_output_folder,name)
-    #     print(bam_path)
-    #     bam = utils.Bam(bam_path)
-    #     mmr = round(bam.getTotalReads()/1000000.0,2)
-    #     mmr_dict[name] = mmr
-
-
-
-    #3. loading the gene dict and creating an exon and intron length dict
-    print('loading gene dict')
-    gene_dict = pickle.load(open(gene_gtf_path,'r'))
-    ref_id_list = gene_dict.keys()
-
-    exon_length_dict = defaultdict(int)
-    intron_length_dict = defaultdict(int)
-    for ref_id in ref_id_list:
-        gene = gene_dict[ref_id]
-        exon_length = sum([locus.len() for locus in gene.txExons()])
-        intron_length = sum([locus.len() for locus in gene.introns()])
-        exon_length_dict[ref_id] = exon_length
-        intron_length_dict[ref_id] = intron_length
-
-    #4. now build the formatted table can copy header from the processed table
-    #need to iterate by row
-    print('calculating fpkm style measurements')
-
-    processed_fpkm_table = [header]
-    unprocessed_fpkm_table = [header]
-
-    ncol = len(header)
-    for i in range(1,len(total_table)):
-
-        ref_id = total_table[i][0]
-        gene_name = total_table[i][1]
-
-        exon_length = exon_length_dict[ref_id]
-        intron_length = intron_length_dict[ref_id]
-        processed_fpkm_vector =[]
-        unprocessed_fpkm_vector =[]
-        for j in range(2,ncol):
-
-            #multiple the processing by the total read count, divide by mmr, divide by length, multiple by 1000
-            #first for processing
-            pr = float(processed_table[i][j])
-            mmr = mmr_dict[header[j]]
-            total_reads = int(total_table[i][j])
-            #pr_fpkm = ((pr*total_reads/mmr)/exon_length)*1000
-            pr_fpkm = (pr*total_reads)/mmr
-            processed_fpkm_vector.append(round(pr_fpkm,2))
-
-            #next for unprocessed
-            if intron_length == 0:
-                upr_fpkm = 0.0
-            else:
-                #upr = float(unprocessed_table[i][j])
-                upr = 1-pr
-                mmr = mmr_dict[header[j]]
-                total_reads = int(total_table[i][j])
-                #upr_fpkm = ((upr*total_reads/mmr)/intron_length)*1000
-                upr_fpkm = (upr*total_reads)/mmr
-            unprocessed_fpkm_vector.append(round(upr_fpkm,2))
-
-        processed_fpkm_table.append(total_table[i][0:2] + processed_fpkm_vector)
-        unprocessed_fpkm_table.append(total_table[i][0:2] + unprocessed_fpkm_vector)
-
-    #write out the updated tables
-    processed_fpkm_out = '%s%s_processed_fpkm.txt' % (guac_output_folder,analysis_name)
-    unprocessed_fpkm_out = '%s%s_unprocessed_fpkm.txt' % (guac_output_folder,analysis_name)
-    utils.unParseTable(processed_fpkm_table,processed_fpkm_out,'\t')
-    utils.unParseTable(unprocessed_fpkm_table,unprocessed_fpkm_out,'\t')
     
 #==========================================================================
 #==================================THE END=================================
